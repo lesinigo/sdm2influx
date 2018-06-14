@@ -130,13 +130,19 @@ class ZeroPublisher(threading.Thread):
 class Sdm2Influx(object):
     """main class"""
 
+    def __init__(self):
+        self.eastron = None
+        self.production = None
+
+    def init_meters(self, serial_port, timeout, production=False):
+        modbus = ModBus(port=serial_port, timeout=timeout)
+        self.eastron = Eastron_SDM(modbus)
+        if production:
+            self.production = Eastron_SDM(modbus, address=2)
+
     def main(self, args):
-        modbus = ModBus(port=args.serial, timeout=args.timeout)
-        eastron = Eastron_SDM(modbus)
-        if args.production:
-            production = Eastron_SDM(modbus, address=2)
-        else:
-            production = None
+        # initialize energy meters
+        self.init_meters(serial_port=args.serial, timeout=args.timeout, production=args.production)
 
         q_influxdb_writer = queue.Queue()
         influx_writer = InfluxWriter(commands=q_influxdb_writer, address=args.influxdb, database=args.database)
@@ -157,31 +163,31 @@ class Sdm2Influx(object):
                            'fields': { },
                            }
 
-            values = eastron.read_all()         # read all registers
+            values = self.eastron.read_all()         # read all registers
 
             # read production meter and derive net consumption
-            if production:
+            if self.production:
                 time.sleep(0.1)
-                production_energy = production.read_energy()
-                production_power = production_energy[12] * -1.0
-                influx_data['fields']['production_power'] = float(production_power)
-                logger.info('%50s: %9.3f', 'Production Power (W)', production_power)
-                consumption_power = values[12] + production_power
-                influx_data['fields']['consumption_power'] = float(consumption_power)
-                logger.info('%50s: %9.3f', 'Consumed Power (W)', consumption_power)
+                production_power = self.production.read_energy()[12] * -1.0
+                consumption_power = float(values[12] + production_power)
                 # determine self consumption
                 if values[12] > 0:
                     # importing additional energy -> 100% autoconsumption of produced power
-                    self_consumption_power = max(production_power, 0)
+                    self_consumption_power = max(production_power, 0.0)
                 else:
                     # exporting additional energy -> 100% autoconsumption of consumed power
-                    self_consumption_power = max(consumption_power, 0)
-                influx_data['fields']['self_consumption_power'] = float(self_consumption_power)
+                    self_consumption_power = max(consumption_power, 0.0)
+                # prepare data for InfluxDB
+                influx_data['fields']['production_power'] = production_power
+                influx_data['fields']['consumption_power'] = consumption_power
+                influx_data['fields']['self_consumption_power'] = self_consumption_power
+                logger.info('%50s: %9.3f', 'Production Power (W)', production_power)
+                logger.info('%50s: %9.3f', 'Consumed Power (W)', consumption_power)
                 logger.info('%50s: %9.3f', 'Self-Consumed Power (W)', self_consumption_power)
 
             for reg in values:                  # log all registers and prepare data for InfluxDB
                 # register name and machine-friendly name
-                name = eastron.registers[reg]
+                name = self.eastron.registers[reg]
                 uglyname = name.split('(', 1)[0].strip().lower().replace(' ', '_')
                 # add value to InfluxDB measurement
                 influx_data['fields'][uglyname] = float(values[reg])
