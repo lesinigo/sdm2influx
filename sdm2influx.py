@@ -133,6 +133,8 @@ class Sdm2Influx(object):
     def __init__(self):
         self.eastron = None
         self.production = None
+        self.q_influxdb_writer = None
+        self.q_zero_publisher = None
 
     def init_meters(self, serial_port, timeout, production=False):
         modbus = ModBus(port=serial_port, timeout=timeout)
@@ -144,60 +146,66 @@ class Sdm2Influx(object):
         # initialize energy meters
         self.init_meters(serial_port=args.serial, timeout=args.timeout, production=args.production)
 
-        q_influxdb_writer = queue.Queue()
-        influx_writer = InfluxWriter(commands=q_influxdb_writer, address=args.influxdb, database=args.database)
+        self.q_influxdb_writer = queue.Queue()
+        influx_writer = InfluxWriter(commands=self.q_influxdb_writer, address=args.influxdb, database=args.database)
         influx_writer.name = 'InfluxWriter'
         influx_writer.start()
 
         if args.zeromq:
-            q_zero_publisher = queue.Queue()
-            zero_publisher = ZeroPublisher(q_zero_publisher)
+            self.q_zero_publisher = queue.Queue()
+            zero_publisher = ZeroPublisher(self.q_zero_publisher)
             zero_publisher.name = 'ZeroPublisher'
             zero_publisher.start()
 
         while True:
-            now = datetime.datetime.utcnow()
-            data_fields = { }
+            now = datetime.datetime.now()
 
-            values = self.eastron.read_all()        # read all registers
-            if self.production:                     # read production meter
-                time.sleep(0.1)
-                production_energy = self.production.read_energy()
-
-            # derive net consumption
-            if self.production:
-                data_fields.update(self.calc_consumption(values, production_energy))
-                logger.info('%50s: %9.3f', 'Production Power (W)', data_fields['production_power'])
-                logger.info('%50s: %9.3f', 'Consumed Power (W)', data_fields['consumption_power'])
-                logger.info('%50s: %9.3f', 'Self-Consumed Power (W)', data_fields['self_consumption_power'])
-
-            for reg in values:                  # log all registers and prepare data for InfluxDB
-                # register name and machine-friendly name
-                name = self.eastron.registers[reg]
-                uglyname = name.split('(', 1)[0].strip().lower().replace(' ', '_')
-                # add value to InfluxDB measurement
-                data_fields[uglyname] = float(values[reg])
-                # log value
-                output = '%50s: %9.3f' % (name, values[reg])
-                logger.info(output)
-
-            # send data to InfluxDB
-            influx_data = {'measurement': 'energy',
-                           'time': now,
-                           'tags': { 'line': 'home_mains' },
-                           'fields': data_fields,
-                           }
-            q_influxdb_writer.put(('WRITE', [influx_data])) # send data to InfluxDB
-
-            # publish data on ZeroMQ
-            if args.zeromq and args.production:
-                zmq_pkt = 'energy %f %f' % (data_fields['consumption_power'], data_fields['production_power'])
-                q_zero_publisher.put(('PUB', zmq_pkt))
+            # read data and send it to InfluxDB and ZeroMQ
+            self.do_main_readings()
 
             # sleep until next minute
             next_cycle = now.replace(second=0, microsecond=0) + datetime.timedelta(minutes=1)
-            nap = max((next_cycle - datetime.datetime.utcnow()).total_seconds(), 0)
+            nap = max((next_cycle - datetime.datetime.now()).total_seconds(), 0)
             time.sleep(nap)
+
+    def do_main_readings(self):
+        data_fields = { }
+
+        values = self.eastron.read_all()        # read all registers
+        if self.production:                     # read production meter
+            time.sleep(0.1)
+            production_energy = self.production.read_energy()
+
+        # derive net consumption
+        if self.production:
+            data_fields.update(self.calc_consumption(values, production_energy))
+            logger.info('%50s: %9.3f', 'Production Power (W)', data_fields['production_power'])
+            logger.info('%50s: %9.3f', 'Consumed Power (W)', data_fields['consumption_power'])
+            logger.info('%50s: %9.3f', 'Self-Consumed Power (W)', data_fields['self_consumption_power'])
+
+        # log all registers and prepare data for InfluxDB
+        for reg in values:
+            # register name and machine-friendly name
+            name = self.eastron.registers[reg]
+            uglyname = name.split('(', 1)[0].strip().lower().replace(' ', '_')
+            # add value to InfluxDB measurement
+            data_fields[uglyname] = float(values[reg])
+            # log value
+            output = '%50s: %9.3f' % (name, values[reg])
+            logger.info(output)
+
+        # send data to InfluxDB
+        influx_data = {'measurement': 'energy',
+                       'time': datetime.datetime.utcnow(),
+                       'tags': { 'line': 'home_mains' },
+                       'fields': data_fields,
+                       }
+        self.q_influxdb_writer.put(('WRITE', [influx_data])) # send data to InfluxDB
+
+        # publish data on ZeroMQ
+        if args.zeromq and self.production:
+            zmq_pkt = 'energy %f %f' % (data_fields['consumption_power'], data_fields['production_power'])
+            self.q_zero_publisher.put(('PUB', zmq_pkt))
 
     @staticmethod
     def calc_consumption(values, production_energy):
