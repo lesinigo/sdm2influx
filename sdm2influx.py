@@ -79,6 +79,68 @@ class Eastron_SDM(object):
 class Sdm2Influx(object):
     """main class"""
 
+    def main(self, args):
+        modbus = ModBus(port=args.serial, timeout=args.timeout)
+        eastron = Eastron_SDM(modbus)
+        if args.production:
+            production = Eastron_SDM(modbus, address=2)
+        else:
+            production = None
+        influx = InfluxDBClient(args.influxdb, 8086, database=args.database)
+
+        if args.zeromq:
+            import zmq
+            zmq_context = zmq.Context()
+            zmq_socket = zmq_context.socket(zmq.PUB)
+            zmq_socket.bind('tcp://*:5556')
+
+        while True:
+            influx_data = {'measurement': 'energy',
+                           'time': datetime.datetime.utcnow(),
+                           'tags': { 'line': 'home_mains' },
+                           'fields': { },
+                           }
+
+            values = eastron.read_all()         # read all registers
+
+            # read production meter and derive net consumption
+            if production:
+                time.sleep(0.1)
+                production_power = production.read_energy() * -1.0
+                influx_data['fields']['production_power'] = float(production_power)
+                logger.info('%50s: %9.3f', 'Production Power (W)', production_power)
+                consumption_power = values[12] + production_power
+                influx_data['fields']['consumption_power'] = float(consumption_power)
+                logger.info('%50s: %9.3f', 'Consumed Power (W)', consumption_power)
+                # determine self consumption
+                if values[12] > 0:
+                    # importing additional energy -> 100% autoconsumption of produced power
+                    self_consumption_power = max(production_power, 0)
+                else:
+                    # exporting additional energy -> 100% autoconsumption of consumed power
+                    self_consumption_power = max(consumption_power, 0)
+                influx_data['fields']['self_consumption_power'] = float(self_consumption_power)
+                logger.info('%50s: %9.3f', 'Self-Consumed Power (W)', self_consumption_power)
+
+            for reg in values:                  # log all registers and prepare data for InfluxDB
+                # register name and machine-friendly name
+                name = eastron.registers[reg]
+                uglyname = name.split('(', 1)[0].strip().lower().replace(' ', '_')
+                # add value to InfluxDB measurement
+                influx_data['fields'][uglyname] = float(values[reg])
+                # log value
+                output = '%50s: %9.3f' % (name, values[reg])
+                logger.info(output)
+
+            influx.write_points([influx_data])  # send data to InfluxDB
+
+            if args.zeromq and args.production:
+                zmq_pkt = 'energy %f %f' % (consumption_power, production_power)
+                zmq_socket.send_string(zmq_pkt)
+                logger.info('ZeroMQ PUB: %s', repr(zmq_pkt))
+
+            time.sleep(60)                      # sleep until next cycle
+
     @staticmethod
     def init_logging():
         '''set up logging and return the main logger'''
@@ -107,69 +169,7 @@ class Sdm2Influx(object):
 
 
 if __name__ == '__main__':
-    Sdm2Influx.init_logging()
-
-    args = Sdm2Influx.parse_arguments(sys.argv[1:])
-
-    modbus = ModBus(port=args.serial, timeout=args.timeout)
-    eastron = Eastron_SDM(modbus)
-    if args.production:
-        production = Eastron_SDM(modbus, address=2)
-    else:
-        production = None
-    influx = InfluxDBClient(args.influxdb, 8086, database=args.database)
-
-    if args.zeromq:
-        import zmq
-        zmq_context = zmq.Context()
-        zmq_socket = zmq_context.socket(zmq.PUB)
-        zmq_socket.bind('tcp://*:5556')
-
-    while True:
-        influx_data = {'measurement': 'energy',
-                       'time': datetime.datetime.utcnow(),
-                       'tags': { 'line': 'home_mains' },
-                       'fields': { },
-                       }
-
-        values = eastron.read_all()         # read all registers
-
-        # read production meter and derive net consumption
-        if production:
-            time.sleep(0.1)
-            production_power = production.read_energy() * -1.0
-            influx_data['fields']['production_power'] = float(production_power)
-            logger.info('%50s: %9.3f', 'Production Power (W)', production_power)
-            consumption_power = values[12] + production_power
-            influx_data['fields']['consumption_power'] = float(consumption_power)
-            logger.info('%50s: %9.3f', 'Consumed Power (W)', consumption_power)
-            # determine self consumption
-            if values[12] > 0:
-                # importing additional energy -> 100% autoconsumption of produced power
-                self_consumption_power = max(production_power, 0)
-            else:
-                # exporting additional energy -> 100% autoconsumption of consumed power
-                self_consumption_power = max(consumption_power, 0)
-            influx_data['fields']['self_consumption_power'] = float(self_consumption_power)
-            logger.info('%50s: %9.3f', 'Self-Consumed Power (W)', self_consumption_power)
-
-        for reg in values:                  # log all registers and prepare data for InfluxDB
-            # register name and machine-friendly name
-            name = eastron.registers[reg]
-            uglyname = name.split('(', 1)[0].strip().lower().replace(' ', '_')
-            # add value to InfluxDB measurement
-            influx_data['fields'][uglyname] = float(values[reg])
-            # log value
-            output = '%50s: %9.3f' % (name, values[reg])
-            logger.info(output)
-
-        influx.write_points([influx_data])  # send data to InfluxDB
-
-        if args.zeromq and args.production:
-            zmq_pkt = 'energy %f %f' % (consumption_power, production_power)
-            zmq_socket.send_string(zmq_pkt)
-            logger.info('ZeroMQ PUB: %s', repr(zmq_pkt))
-
-        time.sleep(60)                      # sleep until next cycle
-
-    modbus.close()
+    sdm2influx = Sdm2Influx()
+    sdm2influx.init_logging()
+    args = sdm2influx.parse_arguments(sys.argv[1:])
+    sdm2influx.main(args)
