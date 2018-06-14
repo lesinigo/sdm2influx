@@ -157,18 +157,16 @@ class Sdm2Influx(object):
 
         while True:
             now = datetime.datetime.utcnow()
-            influx_data = {'measurement': 'energy',
-                           'time': now,
-                           'tags': { 'line': 'home_mains' },
-                           'fields': { },
-                           }
+            data_fields = { }
 
-            values = self.eastron.read_all()         # read all registers
-
-            # read production meter and derive net consumption
-            if self.production:
+            values = self.eastron.read_all()        # read all registers
+            if self.production:                     # read production meter
                 time.sleep(0.1)
-                production_power = self.production.read_energy()[12] * -1.0
+                production_energy = self.production.read_energy()
+
+            # derive net consumption
+            if self.production:
+                production_power = production_energy[12] * -1.0
                 consumption_power = float(values[12] + production_power)
                 # determine self consumption
                 if values[12] > 0:
@@ -178,9 +176,9 @@ class Sdm2Influx(object):
                     # exporting additional energy -> 100% autoconsumption of consumed power
                     self_consumption_power = max(consumption_power, 0.0)
                 # prepare data for InfluxDB
-                influx_data['fields']['production_power'] = production_power
-                influx_data['fields']['consumption_power'] = consumption_power
-                influx_data['fields']['self_consumption_power'] = self_consumption_power
+                data_fields['production_power'] = production_power
+                data_fields['consumption_power'] = consumption_power
+                data_fields['self_consumption_power'] = self_consumption_power
                 logger.info('%50s: %9.3f', 'Production Power (W)', production_power)
                 logger.info('%50s: %9.3f', 'Consumed Power (W)', consumption_power)
                 logger.info('%50s: %9.3f', 'Self-Consumed Power (W)', self_consumption_power)
@@ -190,13 +188,20 @@ class Sdm2Influx(object):
                 name = self.eastron.registers[reg]
                 uglyname = name.split('(', 1)[0].strip().lower().replace(' ', '_')
                 # add value to InfluxDB measurement
-                influx_data['fields'][uglyname] = float(values[reg])
+                data_fields[uglyname] = float(values[reg])
                 # log value
                 output = '%50s: %9.3f' % (name, values[reg])
                 logger.info(output)
 
+            # send data to InfluxDB
+            influx_data = {'measurement': 'energy',
+                           'time': now,
+                           'tags': { 'line': 'home_mains' },
+                           'fields': data_fields,
+                           }
             q_influxdb_writer.put(('WRITE', [influx_data])) # send data to InfluxDB
 
+            # publish data on ZeroMQ
             if args.zeromq and args.production:
                 zmq_pkt = 'energy %f %f' % (consumption_power, production_power)
                 q_zero_publisher.put(('PUB', zmq_pkt))
