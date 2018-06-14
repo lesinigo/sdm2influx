@@ -4,6 +4,7 @@ import argparse
 import datetime
 import logging
 import queue
+import signal
 import struct
 import sys
 import threading
@@ -101,6 +102,7 @@ class InfluxWriter(threading.Thread):
             else:
                 running = False
             self.commands.task_done()
+        logger.info('closing thread')
 
 
 class ZeroPublisher(threading.Thread):
@@ -126,36 +128,46 @@ class ZeroPublisher(threading.Thread):
             else:
                 running = False
             self.commands.task_done()
+        logger.info('closing thread')
 
 class Sdm2Influx(object):
     """main class"""
 
     def __init__(self):
+        self.modbus = None
         self.eastron = None
         self.production = None
         self.q_influxdb_writer = None
+        self.t_influxdb_writer = None
         self.q_zero_publisher = None
+        self.t_zero_publisher = None
 
     def init_meters(self, serial_port, timeout, production=False):
-        modbus = ModBus(port=serial_port, timeout=timeout)
-        self.eastron = Eastron_SDM(modbus)
+        self.modbus = ModBus(port=serial_port, timeout=timeout)
+        self.eastron = Eastron_SDM(self.modbus)
         if production:
-            self.production = Eastron_SDM(modbus, address=2)
+            self.production = Eastron_SDM(self.modbus, address=2)
 
     def main(self, args):
         # initialize energy meters
         self.init_meters(serial_port=args.serial, timeout=args.timeout, production=args.production)
 
         self.q_influxdb_writer = queue.Queue()
-        influx_writer = InfluxWriter(commands=self.q_influxdb_writer, address=args.influxdb, database=args.database)
-        influx_writer.name = 'InfluxWriter'
-        influx_writer.start()
+        self.t_influx_writer = InfluxWriter(commands=self.q_influxdb_writer, address=args.influxdb, database=args.database)
+        self.t_influx_writer.name = 'InfluxWriter'
+        self.t_influx_writer.start()
 
         if args.zeromq:
             self.q_zero_publisher = queue.Queue()
-            zero_publisher = ZeroPublisher(self.q_zero_publisher)
-            zero_publisher.name = 'ZeroPublisher'
-            zero_publisher.start()
+            self.t_zero_publisher = ZeroPublisher(self.q_zero_publisher)
+            self.t_zero_publisher.name = 'ZeroPublisher'
+            self.t_zero_publisher.start()
+
+        # set up signal handler for CTRL-C
+        def quit_handler(signal, frame):
+            self.shutdown()
+        signal.signal(signal.SIGINT, quit_handler)
+        signal.signal(signal.SIGTERM, quit_handler)
 
         while True:
             now = datetime.datetime.now()
@@ -167,6 +179,18 @@ class Sdm2Influx(object):
             next_cycle = now.replace(second=0, microsecond=0) + datetime.timedelta(minutes=1)
             nap = max((next_cycle - datetime.datetime.now()).total_seconds(), 0)
             time.sleep(nap)
+
+    def shutdown(self):
+        # shutdown everything
+        logger.info('shutting down everything')
+        self.q_influxdb_writer.put(('QUIT',None))
+        self.t_influx_writer.join()
+        if self.production:
+            self.q_zero_publisher.put(('QUIT',None))
+            self.t_zero_publisher.join()
+        self.modbus.close()
+        logger.info('shutdown completed')
+        sys.exit(0)
 
     def do_main_readings(self):
         data_fields = { }
