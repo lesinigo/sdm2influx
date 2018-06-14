@@ -170,15 +170,20 @@ class Sdm2Influx(object):
         signal.signal(signal.SIGTERM, quit_handler)
 
         while True:
-            now = datetime.datetime.now()
-
-            # read data and send it to InfluxDB and ZeroMQ
-            self.do_main_readings()
-
-            # sleep until next minute
-            next_cycle = now.replace(second=0, microsecond=0) + datetime.timedelta(minutes=1)
-            nap = max((next_cycle - datetime.datetime.now()).total_seconds(), 0)
-            time.sleep(nap)
+            for cycle in range(6):
+                now = datetime.datetime.now()
+                # TBD TBD TBD: unify main/available readings ZeroMQ messages
+                if cycle == 0:
+                    # read complete data and send it to InfluxDB and ZeroMQ
+                    self.do_main_readings()
+                else:
+                    # just read available energy and publish to ZeroMQ
+                    self.do_available_energy_reading()
+                # sleep until next cycle (10 seconds, rounded)
+                next_cycle = now + datetime.timedelta(seconds=10)
+                next_cycle = next_cycle.replace(second=(next_cycle.second//10*10), microsecond=0)
+                nap = max((next_cycle - datetime.datetime.now()).total_seconds(), 0)
+                time.sleep(nap)
 
     def shutdown(self):
         # shutdown everything
@@ -191,6 +196,12 @@ class Sdm2Influx(object):
         self.modbus.close()
         logger.info('shutdown completed')
         sys.exit(0)
+
+    def do_available_energy_reading(self):
+        available_energy = self.eastron.read_energy()[12] * -1.0
+        if self.q_zero_publisher:
+            zmq_pkt = 'available_energy %f' % available_energy
+            self.q_zero_publisher.put(('PUB', zmq_pkt))
 
     def do_main_readings(self):
         data_fields = { }
@@ -227,7 +238,7 @@ class Sdm2Influx(object):
         self.q_influxdb_writer.put(('WRITE', [influx_data])) # send data to InfluxDB
 
         # publish data on ZeroMQ
-        if args.zeromq and self.production:
+        if self.q_zero_publisher and self.production:
             zmq_pkt = 'energy %f %f' % (data_fields['consumption_power'], data_fields['production_power'])
             self.q_zero_publisher.put(('PUB', zmq_pkt))
 
