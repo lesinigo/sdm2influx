@@ -82,6 +82,7 @@ def parse_arguments(command_line):
     arg_parser.add_argument("-s", "--serial", metavar='DEV', type=str, default='/dev/ttyUSB0', help="modbus serial device")
     arg_parser.add_argument("-t", "--timeout", metavar='TIME', type=float, default=0.125, help="modbus timeout", )
     arg_parser.add_argument("-v", "--version", action='version', version='%(prog)s ' + __version__)
+    arg_parser.add_argument("-z", "--zeromq", action='store_true', help="enable publishing data on ZeroMQ")
     args = arg_parser.parse_args(args=command_line)
     return args
 
@@ -96,6 +97,12 @@ if __name__ == '__main__':
     else:
         production = None
     influx = InfluxDBClient(args.influxdb, 8086, database=args.database)
+
+    if args.zeromq:
+        import zmq
+        zmq_context = zmq.Context()
+        zmq_socket = zmq_context.socket(zmq.PUB)
+        zmq_socket.bind('tcp://*:5556')
 
     while True:
         print(datetime.datetime.now())
@@ -138,6 +145,11 @@ if __name__ == '__main__':
             print(output)
 
         influx.write_points([influx_data])  # send data to InfluxDB
+
+        if args.zeromq and args.production:
+            zmq_pkt = 'energy %f %f' % (consumption_power, production_power)
+            zmq_socket.send_string(zmq_pkt)
+            print('ZeroMQ PUB', repr(zmq_pkt))
 
         time.sleep(60)                      # sleep until next cycle
 
