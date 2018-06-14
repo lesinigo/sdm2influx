@@ -64,6 +64,9 @@ class Eastron_SDM(object):
     def read_register(self, register):
         return self.modbus.read_register(register=register, unit=self.address)
 
+    def read_energy(self):
+        return self.read_register(12)   # Active Power (W)
+
     def read_all(self):
         values = {}
         for reg in self.registers:
@@ -75,6 +78,7 @@ def parse_arguments(command_line):
     arg_parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     arg_parser.add_argument("-d", "--database", metavar='DB', type=str, default='energymon', help="InfluxDB database name")
     arg_parser.add_argument("-i", "--influxdb", metavar='HOST', type=str, default='127.0.0.1', help="InfluxDB host")
+    arg_parser.add_argument("-p", "--production", action='store_true', help="enable 2 meters mode (mains & energy production)")
     arg_parser.add_argument("-s", "--serial", metavar='DEV', type=str, default='/dev/ttyUSB0', help="modbus serial device")
     arg_parser.add_argument("-t", "--timeout", metavar='TIME', type=float, default=0.125, help="modbus timeout", )
     arg_parser.add_argument("-v", "--version", action='version', version='%(prog)s ' + __version__)
@@ -87,6 +91,10 @@ if __name__ == '__main__':
 
     modbus = ModBus(port=args.serial, timeout=args.timeout)
     eastron = Eastron_SDM(modbus)
+    if args.production:
+        production = Eastron_SDM(modbus, address=2)
+    else:
+        production = None
     influx = InfluxDBClient(args.influxdb, 8086, database=args.database)
 
     while True:
@@ -99,6 +107,25 @@ if __name__ == '__main__':
                        }
 
         values = eastron.read_all()         # read all registers
+
+        # read production meter and derive net consumption
+        if production:
+            time.sleep(0.1)
+            production_power = production.read_energy() * -1.0
+            influx_data['fields']['production_power'] = float(production_power)
+            print('%50s: %9.3f' % ('Production Power (W)', production_power))
+            consumption_power = values[12] + production_power
+            influx_data['fields']['consumption_power'] = float(consumption_power)
+            print('%50s: %9.3f' % ('Consumed Power (W)', consumption_power))
+            # determine self consumption
+            if values[12] > 0:
+                # importing additional energy -> 100% autoconsumption of produced power
+                self_consumption_power = max(production_power, 0)
+            else:
+                # exporting additional energy -> 100% autoconsumption of consumed power
+                self_consumption_power = max(consumption_power, 0)
+            influx_data['fields']['self_consumption_power'] = float(self_consumption_power)
+            print('%50s: %9.3f' % ('Self-Consumed Power (W)', self_consumption_power))
 
         for reg in values:                  # print all registers and prepare data for InfluxDB
             # register name and machine-friendly name
