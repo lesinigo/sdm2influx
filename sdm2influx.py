@@ -78,6 +78,30 @@ class Eastron_SDM(object):
             values[reg] = self.read_register(reg)
         return values
 
+class InfluxWriter(threading.Thread):
+    """InfluDB writer thread"""
+
+    def __init__(self, commands, address, database, *args, **kwargs):
+        self.address = address
+        self.database = database
+        self.commands = commands
+        super().__init__(*args, **kwargs)
+
+    def run(self):
+        addr = '%s:8086/%s' % (self.address, self.database)
+        logger.info('starting InfluxDB writer to %s', addr)
+        influx = InfluxDBClient(self.address, 8086, database=self.database)
+        running = True
+        while running:
+            (command, parameter) = self.commands.get()
+            if command == 'WRITE':
+                logger.info('writing data to InfluxDB')
+                influx.write_points(parameter)
+            else:
+                running = False
+            self.commands.task_done()
+
+
 class ZeroPublisher(threading.Thread):
     """ZeroMQ publisher thread"""
 
@@ -112,7 +136,11 @@ class Sdm2Influx(object):
             production = Eastron_SDM(modbus, address=2)
         else:
             production = None
-        influx = InfluxDBClient(args.influxdb, 8086, database=args.database)
+
+        q_influxdb_writer = queue.Queue()
+        influx_writer = InfluxWriter(commands=q_influxdb_writer, address=args.influxdb, database=args.database)
+        influx_writer.name = 'InfluxWriter'
+        influx_writer.start()
 
         if args.zeromq:
             q_zero_publisher = queue.Queue()
@@ -158,7 +186,7 @@ class Sdm2Influx(object):
                 output = '%50s: %9.3f' % (name, values[reg])
                 logger.info(output)
 
-            influx.write_points([influx_data])  # send data to InfluxDB
+            q_influxdb_writer.put(('WRITE', [influx_data])) # send data to InfluxDB
 
             if args.zeromq and args.production:
                 zmq_pkt = 'energy %f %f' % (consumption_power, production_power)
