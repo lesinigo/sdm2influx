@@ -73,22 +73,26 @@ class Eastron_SDM(object):
             values[reg] = self.read_register(reg)
         return values
 
-def parse_arguments(command_line):
-    """reads command line arguments"""
-    arg_parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    arg_parser.add_argument("-d", "--database", metavar='DB', type=str, default='energymon', help="InfluxDB database name")
-    arg_parser.add_argument("-i", "--influxdb", metavar='HOST', type=str, default='127.0.0.1', help="InfluxDB host")
-    arg_parser.add_argument("-p", "--production", action='store_true', help="enable 2 meters mode (mains & energy production)")
-    arg_parser.add_argument("-s", "--serial", metavar='DEV', type=str, default='/dev/ttyUSB0', help="modbus serial device")
-    arg_parser.add_argument("-t", "--timeout", metavar='TIME', type=float, default=0.125, help="modbus timeout", )
-    arg_parser.add_argument("-v", "--version", action='version', version='%(prog)s ' + __version__)
-    arg_parser.add_argument("-z", "--zeromq", action='store_true', help="enable publishing data on ZeroMQ")
-    args = arg_parser.parse_args(args=command_line)
-    return args
+class Sdm2Influx(object):
+    """main class"""
+
+    @staticmethod
+    def parse_arguments(command_line):
+        """reads command line arguments"""
+        arg_parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+        arg_parser.add_argument("-d", "--database", metavar='DB', type=str, default='energymon', help="InfluxDB database name")
+        arg_parser.add_argument("-i", "--influxdb", metavar='HOST', type=str, default='127.0.0.1', help="InfluxDB host")
+        arg_parser.add_argument("-p", "--production", action='store_true', help="enable 2 meters mode (mains & energy production)")
+        arg_parser.add_argument("-s", "--serial", metavar='DEV', type=str, default='/dev/ttyUSB0', help="modbus serial device")
+        arg_parser.add_argument("-t", "--timeout", metavar='TIME', type=float, default=0.125, help="modbus timeout", )
+        arg_parser.add_argument("-v", "--version", action='version', version='%(prog)s ' + __version__)
+        arg_parser.add_argument("-z", "--zeromq", action='store_true', help="enable publishing data on ZeroMQ")
+        args = arg_parser.parse_args(args=command_line)
+        return args
 
 
 if __name__ == '__main__':
-    args = parse_arguments(sys.argv[1:])
+    args = Sdm2Influx.parse_arguments(sys.argv[1:])
 
     modbus = ModBus(port=args.serial, timeout=args.timeout)
     eastron = Eastron_SDM(modbus)
