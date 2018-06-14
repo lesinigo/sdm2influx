@@ -70,7 +70,8 @@ class Eastron_SDM(object):
         return self.modbus.read_register(register=register, unit=self.address)
 
     def read_energy(self):
-        return self.read_register(12)   # Active Power (W)
+        values = { 12: self.read_register(12) } # Active Power (W)
+        return values
 
     def read_all(self):
         values = {}
@@ -161,7 +162,8 @@ class Sdm2Influx(object):
             # read production meter and derive net consumption
             if production:
                 time.sleep(0.1)
-                production_power = production.read_energy() * -1.0
+                production_energy = production.read_energy()
+                production_power = production_energy[12] * -1.0
                 influx_data['fields']['production_power'] = float(production_power)
                 logger.info('%50s: %9.3f', 'Production Power (W)', production_power)
                 consumption_power = values[12] + production_power
