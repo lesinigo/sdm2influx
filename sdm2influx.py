@@ -149,8 +149,9 @@ class Sdm2Influx(object):
             zero_publisher.start()
 
         while True:
+            now = datetime.datetime.utcnow()
             influx_data = {'measurement': 'energy',
-                           'time': datetime.datetime.utcnow(),
+                           'time': now,
                            'tags': { 'line': 'home_mains' },
                            'fields': { },
                            }
@@ -192,7 +193,10 @@ class Sdm2Influx(object):
                 zmq_pkt = 'energy %f %f' % (consumption_power, production_power)
                 q_zero_publisher.put(('PUB', zmq_pkt))
 
-            time.sleep(60)                      # sleep until next cycle
+            # sleep until next minute
+            next_cycle = now.replace(second=0, microsecond=0) + datetime.timedelta(minutes=1)
+            nap = max((next_cycle - datetime.datetime.utcnow()).total_seconds(), 0)
+            time.sleep(nap)
 
     @staticmethod
     def init_logging():
