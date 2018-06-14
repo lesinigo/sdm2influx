@@ -3,8 +3,10 @@
 import argparse
 import datetime
 import logging
+import queue
 import struct
 import sys
+import threading
 import time
 
 from influxdb import InfluxDBClient
@@ -76,6 +78,30 @@ class Eastron_SDM(object):
             values[reg] = self.read_register(reg)
         return values
 
+class ZeroPublisher(threading.Thread):
+    """ZeroMQ publisher thread"""
+
+    def __init__(self, commands, address='tcp://*:5556', *args, **kwargs):
+        self.address = address
+        self.commands = commands
+        super().__init__(*args, **kwargs)
+
+    def run(self):
+        logger.info('starting ZeroMQ publisher at %s', self.address)
+        import zmq
+        zmq_context = zmq.Context()
+        zmq_socket = zmq_context.socket(zmq.PUB)
+        zmq_socket.bind(self.address)
+        running = True
+        while running:
+            (command, parameter) = self.commands.get()
+            if command == 'PUB':
+                logger.info('ZeroMQ PUB: %s', repr(parameter))
+                zmq_socket.send_string(parameter)
+            else:
+                running = False
+            self.commands.task_done()
+
 class Sdm2Influx(object):
     """main class"""
 
@@ -89,10 +115,10 @@ class Sdm2Influx(object):
         influx = InfluxDBClient(args.influxdb, 8086, database=args.database)
 
         if args.zeromq:
-            import zmq
-            zmq_context = zmq.Context()
-            zmq_socket = zmq_context.socket(zmq.PUB)
-            zmq_socket.bind('tcp://*:5556')
+            q_zero_publisher = queue.Queue()
+            zero_publisher = ZeroPublisher(q_zero_publisher)
+            zero_publisher.name = 'ZeroPublisher'
+            zero_publisher.start()
 
         while True:
             influx_data = {'measurement': 'energy',
@@ -136,8 +162,7 @@ class Sdm2Influx(object):
 
             if args.zeromq and args.production:
                 zmq_pkt = 'energy %f %f' % (consumption_power, production_power)
-                zmq_socket.send_string(zmq_pkt)
-                logger.info('ZeroMQ PUB: %s', repr(zmq_pkt))
+                q_zero_publisher.put(('PUB', zmq_pkt))
 
             time.sleep(60)                      # sleep until next cycle
 
@@ -145,7 +170,7 @@ class Sdm2Influx(object):
     def init_logging():
         '''set up logging and return the main logger'''
         global logger
-        log_formatter = logging.Formatter('%(asctime)s - %(threadName)12s - %(levelname)8s - %(message)s')
+        log_formatter = logging.Formatter('%(asctime)s - %(threadName)13s - %(levelname)8s - %(message)s')
         log_handler = logging.StreamHandler()
         log_handler.setFormatter(log_formatter)
         logger.addHandler(log_handler)
