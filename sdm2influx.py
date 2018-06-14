@@ -132,7 +132,7 @@ if __name__ == '__main__':
             name = eastron.registers[reg]
             uglyname = name.split('(', 1)[0].strip().lower().replace(' ', '_')
             # add value to InfluxDB measurement
-            influx_data['fields'][uglyname] = values[reg]
+            influx_data['fields'][uglyname] = float(values[reg])
             # print value
             output = '%50s: %8.3f' % (name, values[reg])
             print(output)
