@@ -9,7 +9,7 @@ import time
 from influxdb import InfluxDBClient
 import pymodbus.client.sync
 
-__version__ = '0.2.0'
+__version__ = '0.2.1'
 
 class ModBus(object):
     def __init__(self, port='/dev/ttyUSB0', baudrate=2400, parity='N', stopbits=1, timeout=0.125):
