@@ -134,7 +134,7 @@ if __name__ == '__main__':
             # add value to InfluxDB measurement
             influx_data['fields'][uglyname] = float(values[reg])
             # print value
-            output = '%50s: %8.3f' % (name, values[reg])
+            output = '%50s: %9.3f' % (name, values[reg])
             print(output)
 
         influx.write_points([influx_data])  # send data to InfluxDB
