@@ -2,6 +2,7 @@
 
 import argparse
 import datetime
+import logging
 import struct
 import sys
 import time
@@ -10,6 +11,8 @@ from influxdb import InfluxDBClient
 import pymodbus.client.sync
 
 __version__ = '0.3.1'
+
+logger = logging.getLogger(__name__)
 
 class ModBus(object):
     def __init__(self, port='/dev/ttyUSB0', baudrate=2400, parity='N', stopbits=1, timeout=0.125):
@@ -77,6 +80,18 @@ class Sdm2Influx(object):
     """main class"""
 
     @staticmethod
+    def init_logging():
+        '''set up logging and return the main logger'''
+        global logger
+        log_formatter = logging.Formatter('%(asctime)s - %(threadName)12s - %(levelname)8s - %(message)s')
+        log_handler = logging.StreamHandler()
+        log_handler.setFormatter(log_formatter)
+        logger.addHandler(log_handler)
+        logger.setLevel(logging.DEBUG)
+        logger.info('This is sdm2influx %s', __version__)
+        return logger
+
+    @staticmethod
     def parse_arguments(command_line):
         """reads command line arguments"""
         arg_parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -92,6 +107,8 @@ class Sdm2Influx(object):
 
 
 if __name__ == '__main__':
+    Sdm2Influx.init_logging()
+
     args = Sdm2Influx.parse_arguments(sys.argv[1:])
 
     modbus = ModBus(port=args.serial, timeout=args.timeout)
@@ -109,8 +126,6 @@ if __name__ == '__main__':
         zmq_socket.bind('tcp://*:5556')
 
     while True:
-        print(datetime.datetime.now())
-
         influx_data = {'measurement': 'energy',
                        'time': datetime.datetime.utcnow(),
                        'tags': { 'line': 'home_mains' },
@@ -124,10 +139,10 @@ if __name__ == '__main__':
             time.sleep(0.1)
             production_power = production.read_energy() * -1.0
             influx_data['fields']['production_power'] = float(production_power)
-            print('%50s: %9.3f' % ('Production Power (W)', production_power))
+            logger.info('%50s: %9.3f', 'Production Power (W)', production_power)
             consumption_power = values[12] + production_power
             influx_data['fields']['consumption_power'] = float(consumption_power)
-            print('%50s: %9.3f' % ('Consumed Power (W)', consumption_power))
+            logger.info('%50s: %9.3f', 'Consumed Power (W)', consumption_power)
             # determine self consumption
             if values[12] > 0:
                 # importing additional energy -> 100% autoconsumption of produced power
@@ -136,24 +151,24 @@ if __name__ == '__main__':
                 # exporting additional energy -> 100% autoconsumption of consumed power
                 self_consumption_power = max(consumption_power, 0)
             influx_data['fields']['self_consumption_power'] = float(self_consumption_power)
-            print('%50s: %9.3f' % ('Self-Consumed Power (W)', self_consumption_power))
+            logger.info('%50s: %9.3f', 'Self-Consumed Power (W)', self_consumption_power)
 
-        for reg in values:                  # print all registers and prepare data for InfluxDB
+        for reg in values:                  # log all registers and prepare data for InfluxDB
             # register name and machine-friendly name
             name = eastron.registers[reg]
             uglyname = name.split('(', 1)[0].strip().lower().replace(' ', '_')
             # add value to InfluxDB measurement
             influx_data['fields'][uglyname] = float(values[reg])
-            # print value
+            # log value
             output = '%50s: %9.3f' % (name, values[reg])
-            print(output)
+            logger.info(output)
 
         influx.write_points([influx_data])  # send data to InfluxDB
 
         if args.zeromq and args.production:
             zmq_pkt = 'energy %f %f' % (consumption_power, production_power)
             zmq_socket.send_string(zmq_pkt)
-            print('ZeroMQ PUB', repr(zmq_pkt))
+            logger.info('ZeroMQ PUB: %s', repr(zmq_pkt))
 
         time.sleep(60)                      # sleep until next cycle
 
