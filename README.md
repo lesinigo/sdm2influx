@@ -1,5 +1,6 @@
 # sdm2influx
-read Eastron SDM 120/230 measurements via ModBus and store them to InfluxDB
+read Eastron SDM 120/230 measurements via ModBus and store them to InfluxDB, and also optionally
+publish data on ZeroMQ
 
 This is a Python script that reads data from [Eastron SDM120 / SDM230](http://www.eastrongroup.com/products/10.html) Modbus energy meters and writes
 it to an [InfluxDB](https://www.influxdata.com/time-series-platform/influxdb/) database.
@@ -19,7 +20,6 @@ See `sdm2influx.py -h`
 ## whishlist
 
 * add `setup.py` and other goodies needed to publish on [PyPi](https://pypi.org)
-* refactor into reusable classes with proper logging
 * add support for multiple energy meters
 * add support for combined measurements
   * meter 1 on main line, meter 2 on sub-line X, meter 3 on sub-line Y, no meter on sub-line Z: 1-(2+3) = sub-line Z
