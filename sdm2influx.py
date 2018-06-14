@@ -166,22 +166,10 @@ class Sdm2Influx(object):
 
             # derive net consumption
             if self.production:
-                production_power = production_energy[12] * -1.0
-                consumption_power = float(values[12] + production_power)
-                # determine self consumption
-                if values[12] > 0:
-                    # importing additional energy -> 100% autoconsumption of produced power
-                    self_consumption_power = max(production_power, 0.0)
-                else:
-                    # exporting additional energy -> 100% autoconsumption of consumed power
-                    self_consumption_power = max(consumption_power, 0.0)
-                # prepare data for InfluxDB
-                data_fields['production_power'] = production_power
-                data_fields['consumption_power'] = consumption_power
-                data_fields['self_consumption_power'] = self_consumption_power
-                logger.info('%50s: %9.3f', 'Production Power (W)', production_power)
-                logger.info('%50s: %9.3f', 'Consumed Power (W)', consumption_power)
-                logger.info('%50s: %9.3f', 'Self-Consumed Power (W)', self_consumption_power)
+                data_fields.update(self.calc_consumption(values, production_energy))
+                logger.info('%50s: %9.3f', 'Production Power (W)', data_fields['production_power'])
+                logger.info('%50s: %9.3f', 'Consumed Power (W)', data_fields['consumption_power'])
+                logger.info('%50s: %9.3f', 'Self-Consumed Power (W)', data_fields['self_consumption_power'])
 
             for reg in values:                  # log all registers and prepare data for InfluxDB
                 # register name and machine-friendly name
@@ -203,13 +191,27 @@ class Sdm2Influx(object):
 
             # publish data on ZeroMQ
             if args.zeromq and args.production:
-                zmq_pkt = 'energy %f %f' % (consumption_power, production_power)
+                zmq_pkt = 'energy %f %f' % (data_fields['consumption_power'], data_fields['production_power'])
                 q_zero_publisher.put(('PUB', zmq_pkt))
 
             # sleep until next minute
             next_cycle = now.replace(second=0, microsecond=0) + datetime.timedelta(minutes=1)
             nap = max((next_cycle - datetime.datetime.utcnow()).total_seconds(), 0)
             time.sleep(nap)
+
+    @staticmethod
+    def calc_consumption(values, production_energy):
+        data = { }
+        data['production_power'] = production_energy[12] * -1.0
+        data['consumption_power'] = float(values[12] + data['production_power'])
+        # determine self consumption
+        if values[12] > 0:
+            # importing additional energy -> 100% autoconsumption of produced power
+            data['self_consumption_power'] = max(data['production_power'], 0.0)
+        else:
+            # exporting additional energy -> 100% autoconsumption of consumed power
+            data['self_consumption_power'] = max(data['consumption_power'], 0.0)
+        return data
 
     @staticmethod
     def init_logging():
