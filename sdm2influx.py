@@ -29,8 +29,13 @@ class ModBus(object):
 
     def read_register(self, register, unit=1):
         res = self.client.read_input_registers(register, 2, unit=unit)
-        value = struct.unpack('>f',struct.pack('>HH',*res.registers))[0]
-        return value
+
+        if type(res) != pymodbus.register_read_message.ReadInputRegistersResponse:
+            logger.error('got type %s !!!', type(res))
+            return None
+        else:
+            value = struct.unpack('>f',struct.pack('>HH',*res.registers))[0]
+            return value
 
     def close(self):
         self.client.close()
@@ -68,7 +73,10 @@ class Eastron_SDM(object):
         self.address = address
 
     def read_register(self, register):
-        return self.modbus.read_register(register=register, unit=self.address)
+        reg = self.modbus.read_register(register=register, unit=self.address)
+        if reg is None:
+            raise RuntimeError
+        return reg
 
     def read_energy(self):
         values = { 12: self.read_register(12) } # Active Power (W)
@@ -175,10 +183,16 @@ class Sdm2Influx(object):
                 # TBD TBD TBD: unify main/available readings ZeroMQ messages
                 if cycle == 0:
                     # read complete data and send it to InfluxDB and ZeroMQ
-                    self.do_main_readings()
+                    try:
+                        self.do_main_readings()
+                    except RuntimeError:
+                        logger.error('got exception during do_main_readings()!')
                 else:
                     # just read available energy and publish to ZeroMQ
-                    self.do_available_energy_reading()
+                    try:
+                        self.do_available_energy_reading()
+                    except RuntimeError:
+                        logger.error('got exception during do_available_energy_reading()!')
                 # sleep until next cycle (10 seconds, rounded)
                 next_cycle = now + datetime.timedelta(seconds=10)
                 next_cycle = next_cycle.replace(second=(next_cycle.second//10*10), microsecond=0)
