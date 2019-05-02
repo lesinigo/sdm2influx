@@ -95,22 +95,26 @@ class InfluxWriter(threading.Thread):
         self.address = address
         self.database = database
         self.commands = commands
+        self.influx = None
         super().__init__(*args, **kwargs)
 
     def run(self):
         addr = '%s:8086/%s' % (self.address, self.database)
         logger.info('starting InfluxDB writer to %s', addr)
-        influx = InfluxDBClient(self.address, 8086, database=self.database)
+        self.influx = InfluxDBClient(self.address, 8086, database=self.database)
         running = True
         while running:
             (command, parameter) = self.commands.get()
             if command == 'WRITE':
                 logger.info('writing data to InfluxDB')
-                influx.write_points(parameter)
+                self._write_points(parameter)
             else:
                 running = False
             self.commands.task_done()
         logger.info('closing thread')
+
+    def _write_points(self, points):
+        self.influx.write_points(points)
 
 
 class ZeroPublisher(threading.Thread):
