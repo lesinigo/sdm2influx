@@ -109,7 +109,11 @@ class InfluxWriter(threading.Thread):
             (command, parameter) = self.commands.get()
             if command == 'WRITE':
                 logger.info('writing data to InfluxDB')
-                self._write_points(parameter)
+                try:
+                    self._write_points(parameter)
+                except InfluxDBServerError:
+                    logger.error("couldn't write data to InfluxDB, giving up on this datapoint",
+                                 exc_info=True)
             else:
                 running = False
             self.commands.task_done()
