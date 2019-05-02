@@ -11,7 +11,9 @@ import threading
 import time
 
 from influxdb import InfluxDBClient
+from influxdb.exceptions import InfluxDBServerError
 import pymodbus.client.sync
+from retrying import retry
 
 __version__ = '0.4.0'
 
@@ -113,6 +115,9 @@ class InfluxWriter(threading.Thread):
             self.commands.task_done()
         logger.info('closing thread')
 
+    @retry(retry_on_exception=lambda exc: isinstance(exc, InfluxDBServerError),
+           wait_fixed=100,
+           stop_max_delay=2000)
     def _write_points(self, points):
         self.influx.write_points(points)
 
