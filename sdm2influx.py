@@ -15,7 +15,7 @@ from influxdb.exceptions import InfluxDBServerError
 import pymodbus.client.sync
 from retrying import retry
 
-__version__ = '0.4.0'
+__version__ = '0.5.0'
 
 logger = logging.getLogger(__name__)
 
