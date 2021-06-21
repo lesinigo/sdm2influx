@@ -186,6 +186,7 @@ class Sdm2Influx(object):
 
         # set up signal handler for CTRL-C
         def quit_handler(signal, frame):
+            logger.info('received signal %s', repr(signal))
             self.shutdown()
         signal.signal(signal.SIGINT, quit_handler)
         signal.signal(signal.SIGTERM, quit_handler)
