@@ -158,20 +158,23 @@ class Sdm2Influx(object):
         self.modbus = None
         self.eastron = None
         self.production = None
+        self.storage = None
         self.q_influxdb_writer = None
         self.t_influxdb_writer = None
         self.q_zero_publisher = None
         self.t_zero_publisher = None
 
-    def init_meters(self, serial_port, timeout, production=False):
+    def init_meters(self, serial_port, timeout, production=False, storage=False):
         self.modbus = ModBus(port=serial_port, timeout=timeout)
         self.eastron = Eastron_SDM(self.modbus)
         if production:
             self.production = Eastron_SDM(self.modbus, address=2)
+        if storage:
+            self.storage = Eastron_SDM(self.modbus, address=3)
 
     def main(self, args):
         # initialize energy meters
-        self.init_meters(serial_port=args.serial, timeout=args.timeout, production=args.production)
+        self.init_meters(serial_port=args.serial, timeout=args.timeout, production=args.production, storage=args.storage)
 
         self.q_influxdb_writer = queue.Queue()
         self.t_influx_writer = InfluxWriter(commands=self.q_influxdb_writer, address=args.influxdb, database=args.database)
@@ -204,7 +207,7 @@ class Sdm2Influx(object):
                 else:
                     # just read available energy and publish to ZeroMQ
                     try:
-                        self.do_available_energy_reading()
+                        self.do_energy_readings()
                     except RuntimeError:
                         logger.error('got exception during do_available_energy_reading()!')
                 # sleep until next cycle (10 seconds, rounded)
@@ -225,7 +228,7 @@ class Sdm2Influx(object):
         logger.info('shutdown completed')
         sys.exit(0)
 
-    def do_available_energy_reading(self):
+    def do_energy_readings(self):
         available_energy = self.eastron.read_energy()[12] * -1.0
         if self.q_zero_publisher:
             zmq_pkt = 'available_energy %f' % available_energy
@@ -238,11 +241,20 @@ class Sdm2Influx(object):
         if self.production:                     # read production meter
             time.sleep(0.1)
             production_energy = self.production.read_energy()
+        else:
+            production_energy = None
+        if self.storage:                        # read storage meter
+            time.sleep(0.1)
+            storage_energy = self.storage.read_energy()
+            data_fields.update({'storage_power': storage_energy[12]})
+        else:
+            storage_energy = None
 
         # derive net consumption
         if self.production:
-            data_fields.update(self.calc_consumption(values, production_energy))
+            data_fields.update(self.calc_consumption(values, production_energy, storage_energy))
             logger.info('%50s: %9.3f', 'Production Power (W)', data_fields['production_power'])
+            logger.info('%50s: %9.3f', 'Storage Power (W)', data_fields['storage_power'])
             logger.info('%50s: %9.3f', 'Consumed Power (W)', data_fields['consumption_power'])
             logger.info('%50s: %9.3f', 'Self-Consumed Power (W)', data_fields['self_consumption_power'])
 
@@ -269,16 +281,25 @@ class Sdm2Influx(object):
         if self.q_zero_publisher and self.production:
             zmq_pkt = 'energy %f %f' % (data_fields['consumption_power'], data_fields['production_power'])
             self.q_zero_publisher.put(('PUB', zmq_pkt))
+        # TBD: send storage data over 0MQ ?
 
     @staticmethod
-    def calc_consumption(values, production_energy):
+    def calc_consumption(values, production_energy, storage_energy):
         data = { }
-        data['production_power'] = production_energy[12] * -1.0
-        data['consumption_power'] = float(values[12] + data['production_power'])
+        if production_energy is None:
+            data['production_power'] = 0.0
+        else:
+            data['production_power'] = production_energy[12] * -1.0
+        if storage_energy is None:
+            data['storage_power'] = 0.0
+        else:
+            data['storage_power'] = storage_energy[12]  # TBD: check sign, we aim for positive = discharging towards household
+        # calculate energy consumption
+        data['consumption_power'] = float(values[12] + data['production_power'] + data['storage_power'])
         # determine self consumption
         if values[12] > 0:
-            # importing additional energy -> 100% autoconsumption of produced power
-            data['self_consumption_power'] = max(data['production_power'], 0.0)
+            # importing additional energy -> 100% autoconsumption of produced and stored power
+            data['self_consumption_power'] = max((data['production_power'] + data["storage_power"]), 0.0)
         else:
             # exporting additional energy -> 100% autoconsumption of consumed power
             data['self_consumption_power'] = max(data['consumption_power'], 0.0)
@@ -302,7 +323,8 @@ class Sdm2Influx(object):
         arg_parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
         arg_parser.add_argument("-d", "--database", metavar='DB', type=str, default='energymon', help="InfluxDB database name")
         arg_parser.add_argument("-i", "--influxdb", metavar='HOST', type=str, default='127.0.0.1', help="InfluxDB host")
-        arg_parser.add_argument("-p", "--production", action='store_true', help="enable 2 meters mode (mains & energy production)")
+        arg_parser.add_argument("-p", "--production", action='store_true', help="enable meter 2 for energy production")
+        arg_parser.add_argument("-S", "--storage", action='store_true', help="enable meter 3 for energy storage")
         arg_parser.add_argument("-s", "--serial", metavar='DEV', type=str, default='/dev/ttyUSB0', help="modbus serial device")
         arg_parser.add_argument("-t", "--timeout", metavar='TIME', type=float, default=0.125, help="modbus timeout", )
         arg_parser.add_argument("-v", "--version", action='version', version='%(prog)s ' + __version__)
