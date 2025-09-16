@@ -1,26 +1,69 @@
 # sdm2influx
-read Eastron SDM 120/230 measurements via ModBus and store them to InfluxDB, and also optionally
-publish data on ZeroMQ
 
-This is a Python script that reads data from [Eastron SDM120 / SDM230](http://www.eastrongroup.com/products/10.html) Modbus energy meters and writes
-it to an [InfluxDB](https://www.influxdata.com/time-series-platform/influxdb/) database.
+A multithreaded Python application that reads energy measurements from Eastron SDM 120/230 Modbus
+meters and stores them in InfluxDB, with optional ZeroMQ data publishing.
 
-It has been developed and is in use on a Raspberry Pi 1 Model B revision 1 (older 256MB model).
+## Overview
 
-## requirements
+This Python module continuously monitors one or more
+[Eastron SDM120 / SDM230](http://www.eastrongroup.com/products/10.html) Modbus energy meters,
+storing the collected data in an [InfluxDB](https://www.influxdata.com/time-series-platform/influxdb/)
+time-series database. Additionally, it can publish real-time data through
+[ZeroMQ](https://zeromq.org) for integration with other systems.
 
-* [Python 3](https://www.python.org) (tested on >= 3.5)
-* [influxdb](https://pypi.org/project/influxdb/)
-* [pymodbus](https://pypi.org/project/pymodbus/)
+It has been developed and is in real world usage on a Raspberry Pi 1 Model B revision 1 (older 256MB model).
 
-## usage
+## Requirements
 
-See `sdm2influx.py -h`
+### Runtime Dependencies
 
-## whishlist
+* [Python 3](https://www.python.org) (version 3.11 or higher)
+* [influxdb](https://pypi.org/project/influxdb/) - InfluxDB client library
+* [pymodbus](https://pypi.org/project/pymodbus/) - Modbus communication protocol
+* [pyzmq](https://pypi.org/project/pyzmq/) - ZeroMQ messaging library
+* [retrying](https://pypi.org/project/retrying/) - Retry logic
 
-* add `setup.py` and other goodies needed to publish on [PyPi](https://pypi.org)
-* add support for multiple energy meters
-* add support for combined measurements
-  * meter 1 on main line, meter 2 on sub-line X, meter 3 on sub-line Y, no meter on sub-line Z: 1-(2+3) = sub-line Z
-  * meter 1 bidirectional flow to/from energy provider, meter 2 photovoltaic production: 1+2 = actual home power consumption
+### System Requirements
+
+* Access to Eastron SDM120/SDM230 energy meters via Modbus
+* InfluxDB instance for data storage
+* Optional: ZeroMQ-compatible systems for real-time data consumption
+
+## Usage
+
+To see all available command-line options and configuration parameters:
+
+```bash
+python sdm2influx.py -h
+```
+
+### Basic Example
+
+```bash
+# Monitor a single meter and store data in InfluxDB
+python sdm2influx.py --influx-host localhost --influx-database energy_data
+```
+
+For detailed configuration options, refer to the help output.
+
+## Development
+
+1. Install the required development tools:
+   * [uv](https://github.com/astral-sh/uv)
+   * [pre-commit](https://pre-commit.com/)
+
+2. Set up the development environment:
+
+   ```bash
+   pre-commit install
+   make install
+   ```
+
+## Wishlist
+
+* Publish package to [PyPI](https://pypi.org)
+* Support for complex meter configurations like multi-branch monitoring
+
+## Contributing
+
+Contributions are welcome! Please ensure all code passes `make check` to maintain code quality.
