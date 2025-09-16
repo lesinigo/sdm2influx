@@ -1,0 +1,61 @@
+[project]
+name = "sdm2influx"
+version = "0.6.0"
+description = "read Eastron SDM 120/230 measurements via ModBus and store them to InfluxDB"
+readme = "README.md"
+license = "GPL-2.0-only"
+authors = [ { name = "Luca Lesinigo", email = "luca@lesinigo.it" } ]
+# minimum tested / supported Python version is based on Raspberry Pi OS 12
+requires-python = ">=3.11"
+# there is actually nothing wrong in distributing this package,
+# I just didn't have time yet to prepare it for PyPi
+classifiers = [
+  "Private :: Do Not Upload",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+
+dependencies = [
+  "influxdb~=5.3",
+  "pymodbus~=3.11",
+  "pyserial~=3.5",
+  "pyzmq~=27.1",
+  "tenacity~=9.1",
+]
+
+scripts.sdm2influx = "sdm2influx:main"
+
+[dependency-groups]
+# testing out ruff & ty, but we also check with mypy and pylint to be sure
+dev = [
+  "mypy>=1.18.1",
+  "pylint>=3.3.8",
+  "ruff>=0.13",
+  "ty>=0.0.1a20",
+]
+
+[tool.ruff]
+line-length = 120
+
+[tool.pylint.main]
+fail-under = 10 # Specify a score threshold under which the program will exit with error.
+
+[tool.pylint.format]
+max-line-length = 120 # Maximum number of characters on a single line.
+
+[tool.pylint."messages control"]
+enable = [ "useless-suppression" ]
+
+[tool.codespell]
+skip = 'uv.lock'
+
+[tool.mypy]
+python_version = "3.11"
+files = [ 'sdm2influx.py' ]
+strict = true
+
+[[tool.mypy.overrides]]
+module = "influxdb.*"
+ignore_missing_imports = true
